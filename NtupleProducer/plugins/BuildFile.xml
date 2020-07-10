@@ -1,0 +1,16 @@
+<use name="FWCore/Framework"/>
+<use name="FWCore/PluginManager"/>
+<use name="FWCore/ParameterSet"/>
+<use name="DataFormats/Candidate"/>
+<use name="PhysicsTools/UtilAlgos"/>
+<use name="L1Trigger/L1TGlobal"/>
+<use name="Geometry/CSCGeometry"/>
+<use name="L1Trigger/CSCTrackFinder"/>
+<use name="RecoVertex/KalmanVertexFit"/>
+<use name="RecoVertex/VertexPrimitives"/>
+<use name="TrackingTools/TransientTrack"/>
+<use name="TrackingTools/TrackAssociator"/>
+<use name="TrackingTools/Records"/>
+<use name="TrackingTools/IPTools"/>
+<use name="RecoMuon/MuonIdentification"/>
+<flags EDM_PLUGIN="1"/>
