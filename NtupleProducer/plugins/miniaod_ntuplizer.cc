@@ -54,6 +54,7 @@
 #include "DataFormats/TrackReco/interface/Track.h"
 #include "DataFormats/TrackReco/interface/TrackBase.h"
 #include "DataFormats/TrackReco/interface/TrackExtra.h"
+#include "TrackingTools/IPTools/interface/IPTools.h"
 
 #include "TH1.h"
 #include "TH2.h"
@@ -81,8 +82,9 @@ class miniaod_ntuplizer : public edm::one::EDAnalyzer<edm::one::SharedResources>
 
       EDGetTokenT<GenParticleCollection> genToken_;
       EDGetTokenT<pat::MuonCollection> muonToken_;
-      //EDGetTokenT<VertexCollection> vtxToken_;
+      EDGetTokenT<VertexCollection> vtxToken_;
       EDGetTokenT<TriggerResults> triggerBits_;
+      EDGetTokenT<BeamSpot> bsToken_;
       //EDGetTokenT<pat::TriggerObjectStandAloneCollection> triggerObjects_;
       //EDGetTokenT<TrackCollection> trackToken_;
       EDGetTokenT<pat::PackedCandidateCollection> pfToken_;
@@ -105,7 +107,11 @@ class miniaod_ntuplizer : public edm::one::EDAnalyzer<edm::one::SharedResources>
       float validFraction_1, normalizedChi2_1, chi2LocalPosition_1, trkKink_1, segmentCompatibility_1, softMvaValue_1=-1;
       float validFraction_2, normalizedChi2_2, chi2LocalPosition_2, trkKink_2, segmentCompatibility_2, softMvaValue_2=-1;
       float m123=-1;
+      float fv_dxysigBS=-1;
+      float fv_dphiBS=-1;
 
+      bool MC_;
+      double displacement_;
 };
 
 //
@@ -122,8 +128,9 @@ class miniaod_ntuplizer : public edm::one::EDAnalyzer<edm::one::SharedResources>
 miniaod_ntuplizer::miniaod_ntuplizer(const edm::ParameterSet& iConfig):
     genToken_(consumes<GenParticleCollection>(iConfig.getParameter<InputTag>("genParticles"))),
     muonToken_(consumes<pat::MuonCollection>(iConfig.getParameter<InputTag>("muons"))),
-    //vtxToken_(consumes<VertexCollection>(iConfig.getParameter<InputTag>("vertices"))),
+    vtxToken_(consumes<VertexCollection>(iConfig.getParameter<InputTag>("vertices"))),
     triggerBits_(consumes<TriggerResults>(iConfig.getParameter<InputTag>("bits"))),
+    bsToken_(consumes<BeamSpot>(iConfig.getParameter<InputTag>("beamSpotHandle"))),
     //triggerObjects_(consumes<pat::TriggerObjectStandAloneCollection>(iConfig.getParameter<InputTag>("objects"))),
     //trackToken_(consumes<TrackCollection>(iConfig.getParameter<InputTag>("trks"))),
     pfToken_(consumes<pat::PackedCandidateCollection>(iConfig.getParameter<edm::InputTag>("pfCands")))
@@ -132,6 +139,9 @@ miniaod_ntuplizer::miniaod_ntuplizer(const edm::ParameterSet& iConfig):
    //give the binning of the histograms
    usesResource("TFileService");
    edm::Service<TFileService> fs;
+
+   MC_ = iConfig.getParameter<bool>("MC");
+   displacement_ = iConfig.getParameter<double>("displacement");
 
    h_count = fs->make<TH1D>("h_count" , "" , 10 , 0 , 10);
 
@@ -193,6 +203,8 @@ miniaod_ntuplizer::miniaod_ntuplizer(const edm::ParameterSet& iConfig):
    tr->Branch("match_Mu9_IP6_2", &match_Mu9_IP6_2, "match_Mu9_IP6_2/I");
    tr->Branch("match_Mu12_IP6_2", &match_Mu12_IP6_2, "match_Mu12_IP6_2/I");
    tr->Branch("m123", &m123, "m123/F");
+   tr->Branch("fv_dxysigBS", &fv_dxysigBS, "fv_dxysigBS/F");
+   tr->Branch("fv_dphiBS", &fv_dphiBS, "fv_dphiBS/F");
    tr->Branch("validFraction_1", &validFraction_1, "validFraction_1/F");
    tr->Branch("normalizedChi2_1", &normalizedChi2_1, "normalizedChi2_1/F");
    tr->Branch("chi2LocalPosition_1", &chi2LocalPosition_1, "chi2LocalPosition_1/F");
@@ -234,10 +246,14 @@ miniaod_ntuplizer::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
    Handle<GenParticleCollection> genParticles;
    iEvent.getByToken(genToken_, genParticles);
 
-   /*Handle<VertexCollection> vertices;
-   iEvent.getByToken(vtxToken_, vertices);
+   Handle<VertexCollection> vertices;
+   iEvent.getByToken(vtxToken_ , vertices);
    if (vertices->empty()) return; // skip the event if no PV found
-   const reco::Vertex &PV = vertices->front();*/
+   //const reco::Vertex &PV = vertices->front();
+
+   Handle<BeamSpot> beamSpotHandle;
+   iEvent.getByToken(bsToken_, beamSpotHandle);
+   BeamSpot bs = *beamSpotHandle;
 
    Handle<TriggerResults> triggerBits;
    //Handle<pat::TriggerObjectStandAloneCollection> triggerObjects;
@@ -257,36 +273,45 @@ miniaod_ntuplizer::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
    TLorentzVector mygenpion;
    mygenpion.SetPtEtaPhiM(0,0,0,0);
 
-   for(size_t i = 2; i < genParticles->size()-2; ++i) { // Loop over generated particles
-     const GenParticle & p = (*genParticles)[i];
-     const GenParticle & p2 = (*genParticles)[i+1];
-     const GenParticle & p3 = (*genParticles)[i+2];
-     const Candidate * mom = p.mother();
-     if (fabs(p.pdgId())==13 and fabs(mom->pdgId())==521 and p.pdgId()==p2.pdgId()){ // find the generated muons
-	  if (p.pt()>p2.pt()){
-	    mygenmuon_1.SetPtEtaPhiM(p.pt(),p.eta(),p.phi(),p.mass());
-	    mygenmuon_2.SetPtEtaPhiM(p2.pt(),p2.eta(),p2.phi(),p2.mass());
-            genq_1=p.charge();
-            genq_2=p2.charge();
-	  }
-	  else{
-            mygenmuon_2.SetPtEtaPhiM(p.pt(),p.eta(),p.phi(),p.mass());
-            mygenmuon_1.SetPtEtaPhiM(p2.pt(),p2.eta(),p2.phi(),p2.mass());
-            genq_2=p.charge();
-            genq_1=p2.charge();
-          }
-          mygenpion.SetPtEtaPhiM(p3.pt(),p3.eta(),p3.phi(),p3.mass());
-	  genq_3=p3.charge();
-	  //std::cout<<"Gen particles: "<<p.pdgId()<<" ("<<p.pt()<<","<<p.eta()<<","<<p.phi()<<") ,"<<p2.pdgId()<<" ("<<p2.pt()<<","<<p2.eta()<<","<<p2.phi()<<") ,"<<p3.pdgId()<<" ("<<p3.pt()<<","<<p3.eta()<<","<<p3.phi()<<") ,"<<std::endl;
+
+   if(MC_) {
+     // Get all collections
+     Handle<GenParticleCollection> genParticles;
+     iEvent.getByToken(genToken_, genParticles);
+	 
+     for(size_t i = 2; i < genParticles->size()-2; ++i) { // Loop over generated particles
+       const GenParticle & p = (*genParticles)[i];
+       const GenParticle & p2 = (*genParticles)[i+1];
+       const GenParticle & p3 = (*genParticles)[i+2];
+       const Candidate * mom = p.mother();
+       if (fabs(p.pdgId())==13 and fabs(mom->pdgId())==521 and p.pdgId()==p2.pdgId()){ // find the generated muons
+	    if (p.pt()>p2.pt()){
+	      mygenmuon_1.SetPtEtaPhiM(p.pt(),p.eta(),p.phi(),p.mass());
+	      mygenmuon_2.SetPtEtaPhiM(p2.pt(),p2.eta(),p2.phi(),p2.mass());
+	      genq_1=p.charge();
+	      genq_2=p2.charge();
+	    }
+	    else{
+	      mygenmuon_2.SetPtEtaPhiM(p.pt(),p.eta(),p.phi(),p.mass());
+	      mygenmuon_1.SetPtEtaPhiM(p2.pt(),p2.eta(),p2.phi(),p2.mass());
+	      genq_2=p.charge();
+	      genq_1=p2.charge();
+	    }
+	    mygenpion.SetPtEtaPhiM(p3.pt(),p3.eta(),p3.phi(),p3.mass());
+	    genq_3=p3.charge();
+	    //std::cout<<"Gen particles: "<<p.pdgId()<<" ("<<p.pt()<<","<<p.eta()<<","<<p.phi()<<") ,"<<p2.pdgId()<<" ("<<p2.pt()<<","<<p2.eta()<<","<<p2.phi()<<") ,"<<p3.pdgId()<<" ("<<p3.pt()<<","<<p3.eta()<<","<<p3.phi()<<") ,"<<std::endl;
+       }
+       //std::cout<<p.pdgId()<<" ("<<mom->pdgId()<<"), ";
      }
-     //std::cout<<p.pdgId()<<" ("<<mom->pdgId()<<"), ";
-   }
-   //std::cout<<std::endl;
+     //std::cout<<std::endl;
+
+   } // if MC
 
    // Assign the generated variables
    genpt_1=mygenmuon_1.Pt(); geneta_1=mygenmuon_1.Eta(); genphi_1=mygenmuon_1.Phi();
    genpt_2=mygenmuon_2.Pt(); geneta_2=mygenmuon_2.Eta(); genphi_2=mygenmuon_2.Phi();
    genpt_3=mygenpion.Pt(); geneta_3=mygenpion.Eta(); genphi_3=mygenpion.Phi();
+
 
    // ######################
    // Get list of reco muons
@@ -304,10 +329,20 @@ miniaod_ntuplizer::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
    reco::TrackRef trk2;
    int k=0;
    //std::cout<<"reco muons: ";
+   edm::ESHandle<TransientTrackBuilder> theB;
+   iSetup.get<TransientTrackRecord>().get("TransientTrackBuilder",theB);
+
    for (const pat::Muon &mu : *muons) {
       mytmpmu.SetPtEtaPhiM(mu.pt(),mu.eta(),mu.phi(),0.105);
       if (mytmpmu.Pt()>2 and fabs(mytmpmu.Eta())<2.4 and mu.isGlobalMuon() and mu.isPFMuon()){ 
-	muon_indices.push_back(k);
+
+        //std::pair<bool, Measurement1D> ip2d = IPTools::absoluteTransverseImpactParameter(theB->build(mu.innerTrack()), PV);
+        //if(ip2d.first) d0sig = ip2d.second.value()/ip2d.second.error();
+        //cout<<mu.innerTrack()->dxy(beamSpotHandle->position())<<endl;
+        double d0sig = fabs(mu.innerTrack()->dxy(beamSpotHandle->position()))/mu.innerTrack()->dxyError();
+        if(d0sig>displacement_) { 
+	  muon_indices.push_back(k);
+        }
 	//std::cout<<"("<<mytmpmu.Pt()<<","<<mytmpmu.Eta()<<","<<mytmpmu.Phi()<<"), ";
       }
       k++; 
@@ -326,8 +361,14 @@ miniaod_ntuplizer::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
    //std::cout<<"reco pions: ";
    for (unsigned int i = 0, n = pfs->size(); i < n; ++i) {
         const pat::PackedCandidate &pf = (*pfs)[i];
+ 
 	if (fabs(pf.pdgId())==211 and pf.pt()>2 and fabs(pf.eta())<2.4 and pf.hasTrackDetails()){ 
-	  pion_indices.push_back(i);
+
+          const Track * pftk = &(pat::PackedCandidateRef(pfs, i)->pseudoTrack()) ;
+          double d0sig = fabs(pftk->dxy(beamSpotHandle->position()))/pftk->dxyError();
+          if(d0sig>displacement_) {
+	    pion_indices.push_back(i);
+          }
           //std::cout<<"("<<pf.pt()<<","<<pf.eta()<<","<<pf.phi()<<"), ";
 	}
    }
@@ -349,6 +390,7 @@ miniaod_ntuplizer::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
       double fv_dOF = -1;
       double fv_Prob = -1;
       double old_prob=-1;
+      TransientVertex fv0;
 
       for (unsigned int i_mu1=0; i_mu1<muon_indices.size()-1; ++i_mu1){
         for (unsigned int i_mu2=i_mu1+1; i_mu2<muon_indices.size(); ++i_mu2){
@@ -361,32 +403,34 @@ miniaod_ntuplizer::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
               trk2 = muon2.innerTrack();
               trk3 = pion.pseudoTrack();
               std::vector<reco::TransientTrack> t_trks;
-              edm::ESHandle<TransientTrackBuilder> theB;
-              iSetup.get<TransientTrackRecord>().get("TransientTrackBuilder",theB);
+              //edm::ESHandle<TransientTrackBuilder> theB;
+              //iSetup.get<TransientTrackRecord>().get("TransientTrackBuilder",theB);
               t_trks.push_back(theB->build(trk1));
               t_trks.push_back(theB->build(trk2));
               t_trks.push_back(theB->build(trk3));
               KalmanVertexFitter kvf;
               TransientVertex fv = kvf.vertex(t_trks);
-              if(fv.isValid()){
-                fv_tC = fv.totalChiSquared();
-                fv_dOF = fv.degreesOfFreedom();
-                fv_Prob = TMath::Prob(fv_tC,(int)fv_dOF);
-              }
-	    }
-	    else{ // bad candidate 
-	      fv_Prob = -99;
-	    }
+              if(!fv.isValid())continue;
+              fv_tC = fv.totalChiSquared();
+              fv_dOF = fv.degreesOfFreedom();
+              fv_Prob = TMath::Prob(fv_tC,(int)fv_dOF);
+	    //else{ // bad candidate 
+	    //  fv_Prob = -99;
+	    //}
 	    //std::cout<<muon1.pt()<<" "<<muon2.pt()<<" "<<pion.pt()<<" "<<fv_Prob<<std::endl;
-            if (fv_Prob>old_prob) {
-	       index_bestmu1=muon_indices[i_mu1]; 
-	       index_bestmu2=muon_indices[i_mu2]; 
-	       index_bestpion=pion_indices[i_pi];
-	       old_prob=fv_Prob;
-	    }
+	      if (fv_Prob>old_prob) {
+		 index_bestmu1=muon_indices[i_mu1]; 
+		 index_bestmu2=muon_indices[i_mu2]; 
+		 index_bestpion=pion_indices[i_pi];
+		 old_prob=fv_Prob;
+		 fv0 = fv;
+	      }
+            }
           }
         }
       }
+
+      if(old_prob<0)return;
 
       // ##########################
       // Fill best object variables
@@ -441,6 +485,16 @@ miniaod_ntuplizer::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
       TLorentzVector myrecopion;
       myrecopion.SetPtEtaPhiM(mypion.pt(),mypion.eta(),mypion.phi(),mypion.mass());
       m123=(myrecomuon1+myrecomuon2+myrecopion).M();
+
+      GlobalError err = fv0.positionError();
+      GlobalPoint displacementFromBeamspot( -1*((bs.x0() -  fv0.position().x()) +  (fv0.position().z() - bs.z0()) * bs.dxdz()),
+      -1*((bs.y0() - fv0.position().y())+  (fv0.position().z() - bs.z0()) * bs.dydz()), 0);
+      double fv_dxyb0 = displacementFromBeamspot.perp();
+      double fv_dxyerr = sqrt(err.rerr(displacementFromBeamspot));
+      fv_dxysigBS = fv_dxyb0/fv_dxyerr;
+      TVector3 dv2DBS(fv0.position().x() - bs.x0(), fv0.position().y() - bs.y0(), 0);
+      TVector3 vmmpxy(myrecomuon1.Px()+myrecomuon2.Px()+myrecopion.Px(), myrecomuon1.Py()+myrecomuon2.Py()+myrecopion.Py(), 0);
+      fv_dphiBS = acos(dv2DBS.Dot(vmmpxy)/(dv2DBS.Perp()*vmmpxy.Perp()));
 
       //std::cout<<"Mass: "<<m123<<std::endl;
       //std::cout<<"Vtx prob: "<<old_prob<<std::endl<<std::endl;
